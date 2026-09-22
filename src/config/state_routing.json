@@ -1,0 +1,20 @@
+{
+  "routes": [
+    {
+      "pattern": ".*Visual Studio Code",
+      "state_id": "vscode_main"
+    },
+    {
+      "pattern": ".*Mozilla Firefox",
+      "state_id": "browser_firefox"
+    },
+    {
+      "pattern": "Spotify.*",
+      "state_id": "spotify_main"
+    },
+    {
+      "pattern": "Desktop",
+      "state_id": "os_desktop"
+    }
+  ]
+}
