@@ -15,6 +15,10 @@
     {
       "pattern": "Desktop",
       "state_id": "os_desktop"
+    },
+    {
+      "pattern": "joaolopes2003.*",
+      "state_id": "terminal_main"
     }
   ]
 }

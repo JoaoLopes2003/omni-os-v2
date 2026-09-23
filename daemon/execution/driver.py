@@ -1,8 +1,8 @@
 import time
 import pyautogui
 import pyperclip
-from src.core.schemas import UIElement, BoundingBox
-from src.reasoning.llm_planner import ActionPlan
+from shared.models.schemas import UIElement, BoundingBox
+from services.planner.llm_planner import ActionPlan
 
 class ActionDriver:
     def __init__(self, primary_button: str = "left"):

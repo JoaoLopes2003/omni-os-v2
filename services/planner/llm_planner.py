@@ -5,7 +5,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 from typing import Literal
 from PIL import Image
-from src.core.schemas import UIElement
+from shared.models.schemas import UIElement
 
 class ActionPlan(BaseModel):
     reasoning: str = Field(

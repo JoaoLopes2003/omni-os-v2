@@ -1,0 +1,7 @@
+{
+  "prewarm_targets": [
+    {"cmd": "code", "expected_state": "vscode_main"},
+    {"cmd": "firefox", "expected_state": "browser_firefox"},
+    {"cmd": "spotify", "expected_state": "spotify_main"}
+  ]
+}
