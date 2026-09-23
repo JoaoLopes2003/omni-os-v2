@@ -22,5 +22,5 @@ src/debug/
 .idea/
 .DS_Store
 *.log
-.*/debug/
-.*/data/states
+**/debug/**
+shared/data/states/**
