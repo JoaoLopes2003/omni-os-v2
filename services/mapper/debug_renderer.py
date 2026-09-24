@@ -1,5 +1,4 @@
 import cv2
-import os
 
 class DebugRenderer:
     def __init__(self):

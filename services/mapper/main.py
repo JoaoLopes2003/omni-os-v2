@@ -91,4 +91,4 @@ async def map_ui_state(
 
 if __name__ == "__main__":
     # Run the server locally on port 8001
-    uvicorn.run(app, host="0.0.0.0", port=8002)
+    uvicorn.run(app, host="0.0.0.0", port=8001)

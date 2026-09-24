@@ -57,7 +57,7 @@ class ActionDriver:
             
             # Clear the clipboard for security (optional but good practice)
             time.sleep(0.1)
-            pyperclip.copy("") 
+            pyperclip.copy("")
             
             return True
 

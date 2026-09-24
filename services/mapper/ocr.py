@@ -1,7 +1,5 @@
 import easyocr
 import cv2
-import time
-from daemon.core.capture import ScreenCaptureEngine
 
 class OCRProcessor:
     def __init__(self, languages: list[str] = ['en', 'pt'], gpu: bool = True):

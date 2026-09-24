@@ -4,6 +4,7 @@ import mss
 import requests
 import pywinctl
 import pyautogui
+import pyperclip
 import mss.tools
 import json
 import subprocess
@@ -26,7 +27,7 @@ class OmniOSDaemon:
         try:
             with open(image_path, "rb") as img_file:
                 response = requests.post(
-                    "http://localhost:8002/map",
+                    "http://localhost:8001/map",
                     data={
                         "state_id": state_id, 
                         "window_title": window_title,
@@ -154,55 +155,136 @@ class OmniOSDaemon:
                 matching_window.restore()
 
         print("[Daemon] Cache Pre-warming complete.\n")
+
+    def _execute_action(self, action: dict, active_window, state_graph):
+        """Translates a JSON action into physical OS operations."""
+        a_type = action.get("action_type")
+        history_entry = f"Executed {a_type}"
+
+        if a_type == "click_element":
+            target_id = action.get("target_id")
+            # Find the element in the graph
+            element = next((e for e in state_graph.elements if e.id == target_id), None)
+            if element:
+                # Denormalize coordinates relative to the active window
+                x = int(active_window.left + (element.center_x / 1000 * active_window.width))
+                y = int(active_window.top + (element.center_y / 1000 * active_window.height))
+                pyautogui.click(x, y, duration=0.5, button="left")
+                history_entry += f" on '{target_id}' at ({x}, {y})"
+            else:
+                print(f"[Execution Error] Element '{target_id}' not found in state graph.")
+                history_entry += f" (FAILED: '{target_id}' not found)"
+
+        elif a_type == "click_coordinate":
+            tx = action.get("target_x", 500)
+            ty = action.get("target_y", 500)
+            x = int(active_window.left + (tx / 1000 * active_window.width))
+            y = int(active_window.top + (ty / 1000 * active_window.height))
+            pyautogui.click(x, y, duration=0.5, button="left")
+            history_entry += f" at relative ({tx}, {ty})"
+
+        elif a_type == "type_text":
+            payload = action.get("text_payload", "")
+            pyperclip.copy(payload)
+            time.sleep(0.1)
+            pyautogui.hotkey("ctrl", "v")
+            time.sleep(0.1)
+            pyperclip.copy("")
+            history_entry += f": '{payload}'"
+
+        elif a_type == "hotkey":
+            combo = action.get("hotkey_combo", [])
+            pyautogui.hotkey(*combo)
+            history_entry += f" {combo}"
+
+        elif a_type == "run_cli_command":
+            cmd = action.get("text_payload", "")
+            subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            history_entry += f": '{cmd}'"
+
+        elif a_type == "extract_data":
+            label = action.get("memory_label", "unknown_var")
+            val = action.get("text_payload", "")
+            self.memory[label] = val
+            history_entry += f" ({label} = '{val}')"
+
+        elif a_type == "switch_window":
+            target_title = action.get("text_payload", "")
+            windows = pywinctl.getAllWindows()
+            target_win = next((w for w in windows if target_title.lower() in w.title.lower()), None)
+            if target_win:
+                target_win.activate()
+                time.sleep(0.5)
+                history_entry += f" to '{target_title}'"
+            else:
+                history_entry += f" (FAILED: window '{target_title}' not found)"
+
+        elif a_type == "wait":
+            wait_time = action.get("wait_seconds", 2)
+            time.sleep(wait_time)
+            history_entry += f" for {wait_time}s"
+
+        return history_entry
         
     def run(self, user_goal: str):
-        # Execute the startup sequence first
         self._bootstrap_system()
 
         print(f"\n[Daemon] Task Accepted: '{user_goal}'")
-        print("[Daemon] Entering autonomous loop. Press Ctrl+C to abort.\n")
+        print("[Daemon] Consulting Master Planner...")
         
-        step_count = 1
-        
+        # Ask the Master Planner to decompose the goal
         try:
-            while True:
-                print(f"--- Step {step_count} ---")
+            response = requests.post(
+                "http://localhost:8002/decompose",
+                data={"user_goal": user_goal}
+            )
+            if response.status_code == 200:
+                decomposition = response.json()
+                subgoals = decomposition.get("subgoals", [])
                 
-                # Sense the Environment
-                window_title = self.observer.get_active_window_title()
+                # Initialize memory with the Master Planner's extracted variables
+                raw_memory = decomposition.get("initial_memory", [])
+                self.memory = {item["key"]: item["value"] for item in raw_memory}
                 
-                # Identify the State
-                state_id = self.router.resolve_state_id(window_title)
-                print(f"[Daemon] Active Window: '{window_title}'")
-                print(f"[Daemon] Resolved State: '{state_id}'")
-                
-                # Check Memory (Graph Database)
-                state_graph = self.db.get_state(state_id)
-                
-                if state_graph:
-                    # ==========================================
-                    # THE FAST PATH (Gemini Flash Planner)
-                    # ==========================================
-                    print(f"[Daemon] -> CACHE HIT! State '{state_id}' is mapped.")
-                    print(f"[Daemon] -> Triggering Planner microservice (Gemini Flash)...")
-                    
-                    # TODO: Send Image + state_graph.model_dump_json() to Planner
-                    # TODO: Execute returned ActionPlan
-                    
-                    print("[Daemon] (Mocking Fast Path execution...)\n")
-                    time.sleep(2) 
-                    
-                else:
-                    # ==========================================
-                    # THE SLOW PATH (Trigger Mapper Microservice)
-                    # ==========================================
-                    print(f"[Daemon] -> CACHE MISS! Unmapped state: '{state_id}'")
-                    print(f"[Daemon] -> Taking screenshot and triggering Mapper microservice...")
+                print(f"[Daemon] Thought Process: {decomposition.get('thought_process')}")
+                print(f"[Daemon] Extracted {len(self.memory)} initial variables.")
+                print(f"[Daemon] Generated {len(subgoals)} subgoals.")
+            else:
+                print(f"[Daemon] Master Planner API Failed: {response.text}")
+                return
+        except requests.exceptions.ConnectionError:
+            print("[Daemon] Error: Could not connect to Master Planner on port 8002.")
+            return
 
-                    # Get the exact bounding box of the focused window
+        print("\n[Daemon] Entering autonomous execution. Press Ctrl+C to abort.")
+        
+        # Iterate through Subgoals (The Outer Loop)
+        for i, subgoal in enumerate(subgoals):
+            current_subgoal_text = subgoal.get("description")
+            print(f"\n==========================================")
+            print(f"[Daemon] Executing Subgoal {i + 1}/{len(subgoals)}")
+            print(f"[Daemon] Target: {current_subgoal_text}")
+            print(f"==========================================")
+            
+            # Reset action history for each new subgoal to prevent context bleeding
+            self.action_history = []
+            step_count = 1
+            subgoal_complete = False
+            
+            # Action Planner Execution (The Inner Loop)
+            try:
+                while not subgoal_complete:
+                    print(f"\n--- Step {step_count} ---")
+                    
+                    # Sense the Environment
                     active_window = pywinctl.getActiveWindow()
+                    window_title = active_window.title if active_window else "Desktop"
+                    state_id = self.router.resolve_state_id(window_title)
+                    
+                    print(f"[Daemon] Active Window: '{window_title}'")
+                    print(f"[Daemon] Resolved State: '{state_id}'")
+                    
                     if active_window:
-                        # Ensure we don't pass negative coordinates if the window is off-screen
                         monitor_bbox = {
                             "top": max(0, active_window.top),
                             "left": max(0, active_window.left),
@@ -210,36 +292,81 @@ class OmniOSDaemon:
                             "height": active_window.height
                         }
                     else:
-                        # Fallback to full primary screen if no window is active
                         monitor_bbox = 1 
 
-                    # Take a screenshot of ONLY that bounding box
                     screenshot_path = "tmp/temp_capture.png"
                     with mss.MSS() as sct:
-                        # grab() takes the custom dictionary and returns an image object
                         img = sct.grab(monitor_bbox)
-                        # Save it to disk
                         mss.tools.to_png(img.rgb, img.size, output=screenshot_path)
-
-                    # Send the multipart/form-data request to the Mapper
-                    self._send_to_mapper(state_id, window_title, screenshot_path)
                     
-                    # Cleanup local screenshot
+                    state_graph = self.db.get_state(state_id)
+                    
+                    if state_graph:
+                        print(f"[Daemon] -> CACHE HIT! Triggering Action Planner...")
+                        open_windows = [w.title for w in pywinctl.getAllWindows() if w.title.strip()]
+                        
+                        try:
+                            with open(screenshot_path, "rb") as img_file:
+                                response = requests.post(
+                                    "http://localhost:8003/plan",
+                                    data={
+                                        "user_goal": current_subgoal_text,
+                                        "state_id": state_id,
+                                        "state_graph": state_graph.model_dump_json(),
+                                        "open_windows": json.dumps(open_windows),
+                                        "action_history": json.dumps(self.action_history[-5:]), 
+                                        "memory": json.dumps(self.memory) # Memory persists across all subgoals
+                                    },
+                                    files={"image": img_file}
+                                )
+                            
+                            if response.status_code == 200:
+                                plan_data = response.json()
+                                print(f"[Planner] Thought: {plan_data.get('thought_process')}")
+                                
+                                actions = plan_data.get("data", [])
+                                for action in actions:
+                                    a_type = action.get("action_type")
+                                    
+                                    if a_type == "done":
+                                        print(f"\n[Daemon] Subgoal {i + 1} achieved!")
+
+                                        # Purge temporary variables before the next subgoal
+                                        self.memory = {k: v for k, v in self.memory.items() if not k.startswith("temp_")}
+                                        print(f"[Daemon] Memory cleaned. Retained {len(self.memory)} global variables.")
+
+                                        subgoal_complete = True
+                                        break # Breaks action loop, proceeds to next subgoal
+                                        
+                                    elif a_type == "abort":
+                                        print("\n[Daemon] Action Planner aborted the task. Halting entire sequence.")
+                                        return
+                                    
+                                    history_log = self._execute_action(action, active_window, state_graph)
+                                    print(f"  -> {history_log}")
+                                    self.action_history.append(history_log)
+                                    time.sleep(0.5) 
+                            else:
+                                print(f"[Daemon] Planner API Failed: {response.text}")
+                                
+                        except requests.exceptions.ConnectionError:
+                            print("[Daemon] Error: Could not connect to Planner.")
+                            
+                    else:
+                        print(f"[Daemon] -> CACHE MISS! Triggering Mapper microservice...")
+                        self._send_to_mapper(state_id, window_title, screenshot_path)
+                        time.sleep(1)
+                    
                     if os.path.exists(screenshot_path):
                         os.remove(screenshot_path)
-                        
-                    print("[Daemon] Slow path complete. Looping...\n")
-                    time.sleep(2)
-                
-                step_count += 1
-                
-                # Mock termination after 3 steps for safety during testing
-                if step_count > 3:
-                    print("[Daemon] Mock limit reached. Exiting.")
-                    break
                     
-        except KeyboardInterrupt:
-            print("\n[Daemon] Execution aborted by user.")
+                    step_count += 1
+                        
+            except KeyboardInterrupt:
+                print("\n[Daemon] Execution aborted by user.")
+                return # Exits the entire run method
+                
+        print("\n[Daemon] All subgoals completed successfully. Omni-OS returning to standby.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Omni-OS Daemon Core")
@@ -247,4 +374,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     daemon = OmniOSDaemon(debug_mode=args.debug)
-    daemon.run(user_goal="Open Firefox and search for Omni-OS.")
+    daemon.run(user_goal="Go to Spotify, chose a song that my father might like (he was born in 1974) and send an email to him with the spotify link. He's email is sergio.h.s.lopes@gmail.com.")
