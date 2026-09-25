@@ -19,7 +19,7 @@ class MapperAgent:
         self.client = genai.Client(api_key=api_key)
         self.db = GraphDatabase(db_dir="shared/data/states")
 
-    def generate_state_map(self, image_path: str, window_title: str, state_id: str, raw_ocr_data: list[dict]) -> ScreenStateNode:
+    def generate_state_map(self, image_path: str, window_title: str, state_id: str, raw_ocr_data: list[dict]) -> tuple[ScreenStateNode, str, dict[str, int]]:
         """
         Analyzes the clean UI and raw OCR data to generate a mapped ScreenStateNode.
         """
@@ -76,5 +76,11 @@ Raw OCR Data (X,Y are 0-1000 normalized):
         # Persist the final, clean graph to the database
         self.db.save_state(final_state)
         print(f"[Mapper] Successfully mapped {len(final_state.elements)} elements for '{state_id}'.")
+
+        # Extract token usage
+        token_usage = {
+            "input_tokens": response.usage_metadata.prompt_token_count,
+            "output_tokens": response.usage_metadata.candidates_token_count
+        }
         
-        return final_state
+        return final_state, token_usage

@@ -18,17 +18,22 @@ if not api_key:
 master_planner_agent = MasterPlannerAgent(api_key=api_key)
 
 @app.post("/decompose")
-async def decompose_user_goal(user_goal: str = Form(...)):
+async def decompose_user_goal(
+    user_goal: str = Form(...),
+    user_profile: str = Form("No specific preferences provided.") # Default fallback
+):
     print(f"[Planner API] Received Master Plan request for goal.")
     
     try:
-        decomposition = master_planner_agent.decompose_task(user_goal)
+        decomposition, raw_prompt, token_usage = master_planner_agent.decompose_task(user_goal, user_profile)
 
         return {
             "status": "success",
             "thought_process": decomposition.thought_process,
             "initial_memory": decomposition.initial_memory,
-            "subgoals": [sub.model_dump() for sub in decomposition.subgoals]
+            "subgoals": [sub.model_dump() for sub in decomposition.subgoals],
+            "raw_prompt": raw_prompt,
+            "token_usage": token_usage
         }
 
     except Exception as e:

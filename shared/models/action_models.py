@@ -9,7 +9,8 @@ class Action(BaseModel):
         'type_text', 
         'hotkey', 
         'run_cli_command', 
-        'extract_data', 
+        'extract_data',
+        'save_clipboard_to_memory', 
         'switch_window', 
         'wait', 
         'done', 
@@ -36,7 +37,7 @@ class Action(BaseModel):
     )
     memory_label: Optional[str] = Field(
         default=None,
-        description="A descriptive name for the variable being saved (e.g., 'Invoice Total'). Use only with 'extract_data'."
+        description="A descriptive name for the variable being saved. Use only with 'extract_data' or 'save_clipboard_to_memory'."
     )
     
     hotkey_combo: Optional[List[str]] = Field(

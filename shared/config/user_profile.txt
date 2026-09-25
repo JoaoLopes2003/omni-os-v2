@@ -1,0 +1,2 @@
+Default Email: Gmail via Web Browser
+Default Music: Spotify Desktop App

@@ -18,7 +18,7 @@ class PlannerAgent:
         open_windows: list[str],
         action_history: list[str],
         memory: dict[str, str]
-    ) -> ActionPlan:
+    ) -> tuple[ActionPlan, str, dict[str, int]]:
         
         system_instruction = f"""You are the Omni-OS Autonomous Execution Engine.
 Your job is to achieve the USER GOAL by outputting a precise sequence of OS actions.
@@ -39,15 +39,16 @@ Your rules:
 - Use 'hotkey' actions (like ['ctrl', 'c']) if you know they apply.
 - To switch to a different application, output a 'switch_window' action and provide the exact window title in `text_payload`.
 - To run a background bash command, use 'run_cli_command' and provide the command in `text_payload`.
-- To save information, use the 'extract_data' action. You MUST provide the extracted text in `text_payload` AND a variable name in `memory_label`.
+- To save visible text from the screen, use 'extract_data'. You MUST provide the extracted text in `text_payload` AND a variable name in `memory_label`.
+- To save data that was just copied to the system clipboard (e.g., after clicking a "Copy Link" button), use 'save_clipboard_to_memory'. You MUST provide a variable name in `memory_label`.
 - VARIABLE NAMING RULES: 
   1. If the USER GOAL explicitly asks you to store information under a specific name (e.g., "store it as `target_email`"), you MUST use that EXACT name for your `memory_label`.
   2. If you are extracting information temporarily just to help you finish the current goal, you MUST prefix your `memory_label` with `temp_` (e.g., `temp_clipboard_link`, `temp_artist_name`).
 - If the user goal is fully complete, output a 'done' action.
-- Keep plans short (1 to 3 actions max).
+- Keep plans short (1 to 5 actions max).
 
 ANTI-LOOP & STATE PROTOCOLS:
-- If the screen is clearly loading, output a 'wait' action.
+- UI LATENCY & PATIENCE: If the screen is clearly loading, OR if your PAST ACTIONS show you just clicked a UI element but the screen hasn't changed yet, DO NOT click again. Trust your previous action and output a 'wait' action to give the application time to render.
 - Review the PAST ACTIONS. If you have attempted the exact same action repeatedly without achieving the desired state, you are stuck. You MUST try a different approach or output an 'abort' action.
 - If the user's request is impossible to fulfill, output an 'abort' action.
 
@@ -79,4 +80,13 @@ EXTRACTED MEMORY (Key-Value Pairs):
         
         plan = ActionPlan.model_validate_json(response.text)
         print(f"[Planner] Plan generated: {len(plan.actions)} actions.")
-        return plan
+
+        full_prompt = f"{system_instruction}\n\nUSER GOAL: {user_goal}"
+
+        # Extract token usage
+        token_usage = {
+            "input_tokens": response.usage_metadata.prompt_token_count,
+            "output_tokens": response.usage_metadata.candidates_token_count
+        }
+        
+        return plan, full_prompt, token_usage

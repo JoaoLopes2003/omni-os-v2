@@ -41,40 +41,44 @@ async def map_ui_state(
             temp_image_path = temp_img.name
 
         print("[Mapper API] Running EasyOCR...")
+        start_ocr = time.time()
         ocr_data = ocr_processor.extract_normalized_data(temp_image_path)
+        ocr_time = time.time() - start_ocr
         
         print(f"[Mapper API] Triggering Gemini 3.1 Pro...")
-        final_state = mapper_agent.generate_state_map(
+        start_llm = time.time()
+        final_state, token_usage = mapper_agent.generate_state_map(
             image_path=temp_image_path,
             window_title=window_title,
             state_id=state_id,
             raw_ocr_data=ocr_data
         )
+        llm_time = time.time() - start_llm
 
         # ==========================================
         # DEBUG ARTIFACT GENERATION
         # ==========================================
         if is_debug:
             timestamp = int(time.time())
-            debug_dir = f"shared/debug/{state_id}_{timestamp}"
+            debug_dir = f"shared/debug/states/{state_id}_{timestamp}"
             os.makedirs(debug_dir, exist_ok=True)
             print(f"[Mapper API] Debug mode enabled. Saving artifacts to {debug_dir}/")
             
-            # 1. Original Screenshot
+            # Original Screenshot
             shutil.copy2(temp_image_path, f"{debug_dir}/1_original_screenshot.png")
             
-            # 2. OCR JSON Result
+            # OCR JSON Result
             with open(f"{debug_dir}/2_ocr_data.json", "w") as f:
                 json.dump(ocr_data, f, indent=2)
                 
-            # 3. OCR Bounding Boxes Image
+            # OCR Bounding Boxes Image
             renderer.draw_ocr_bboxes(temp_image_path, ocr_data, f"{debug_dir}/3_ocr_visual.png")
             
-            # 4. Gemini JSON Result
+            # Gemini JSON Result
             with open(f"{debug_dir}/4_gemini_data.json", "w") as f:
                 f.write(final_state.model_dump_json(indent=2))
                 
-            # 5. Gemini Center Dots Image
+            # Gemini Center Dots Image
             renderer.draw_gemini_elements(temp_image_path, final_state.model_dump()["elements"], f"{debug_dir}/5_gemini_visual.png")
 
         os.remove(temp_image_path)
@@ -82,7 +86,12 @@ async def map_ui_state(
         return {
             "status": "success",
             "message": f"Successfully mapped {len(final_state.elements)} elements.",
-            "data": final_state.model_dump()
+            "data": final_state.model_dump(),
+            "metrics": {
+                "ocr_time": ocr_time,
+                "llm_time": llm_time,
+                "token_usage": token_usage
+            }
         }
 
     except Exception as e:

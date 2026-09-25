@@ -39,7 +39,7 @@ async def generate_action_plan(
         history_list = json.loads(action_history)
         memory_dict = json.loads(memory)
 
-        action_plan = planner_agent.generate_plan(
+        action_plan, raw_prompt, token_usage = planner_agent.generate_plan(
             image_path=temp_image_path,
             user_goal=user_goal,
             state_id=state_id,
@@ -54,7 +54,9 @@ async def generate_action_plan(
         return {
             "status": "success",
             "thought_process": action_plan.thought_process,
-            "data": [action.model_dump() for action in action_plan.actions]
+            "data": [action.model_dump() for action in action_plan.actions],
+            "raw_prompt": raw_prompt,
+            "token_usage": token_usage
         }
 
     except Exception as e:
