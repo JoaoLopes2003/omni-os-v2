@@ -62,6 +62,10 @@ class OmniOSDaemon:
                         input_tokens=tokens["input_tokens"],
                         output_tokens=tokens["output_tokens"]
                     )
+
+                    mapper_debug_time = metrics_data.get("debug_time", 0.0)
+                    if mapper_debug_time > 0:
+                        self.metrics.add_external_pause(mapper_debug_time)
             else:
                 print(f"[Daemon] Mapper Failed: {response.text}")
         except requests.exceptions.ConnectionError:
@@ -293,8 +297,11 @@ class OmniOSDaemon:
         
     def run(self, user_goal: str):
         self._bootstrap_system()
+        self.metrics.record_prewarm_complete()
 
+        self.metrics.pause()
         self.logger.start_user_prompt(user_goal)
+        self.metrics.resume()
 
         print(f"\n[Daemon] Task Accepted: '{user_goal}'")
         print("[Daemon] Consulting Master Planner...")
@@ -323,10 +330,14 @@ class OmniOSDaemon:
                     output_tokens=tokens["output_tokens"]
                 )
 
+                self.metrics.pause()
                 self.logger.log_master_planner(
                     raw_prompt=decomposition.get("raw_prompt", ""), 
                     response=decomposition
                 )
+                self.metrics.resume()
+
+                self.metrics.record_master_complete()
 
                 subgoals = decomposition.get("subgoals", [])
                 
@@ -350,7 +361,9 @@ class OmniOSDaemon:
         for i, subgoal in enumerate(subgoals):
             current_subgoal_text = subgoal.get("description")
 
+            self.metrics.pause()
             self.logger.start_subgoal(i + 1, current_subgoal_text)
+            self.metrics.resume()
 
             print(f"\n==========================================")
             print(f"[Daemon] Executing Subgoal {i + 1}/{len(subgoals)}")
@@ -432,7 +445,8 @@ class OmniOSDaemon:
                                     "memory_dictionary": self.memory,
                                     "action_history": self.action_history
                                 }
-                                
+
+                                self.metrics.pause()
                                 self.logger.log_action_step(
                                     inner_step=step_count,
                                     screenshot_path=screenshot_path,
@@ -441,6 +455,7 @@ class OmniOSDaemon:
                                     state=internal_state,
                                     state_graph_dict=state_graph.model_dump()
                                 )
+                                self.metrics.resume()
 
                                 print(f"[Planner] Thought: {current_thought}")
                                 

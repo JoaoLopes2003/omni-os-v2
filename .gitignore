@@ -16,6 +16,7 @@ src/debug/
 *.png
 *.jpg
 *.jpeg
+tests/**/*.json
 
 # IDE and OS metadata
 .vscode/

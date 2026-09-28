@@ -58,7 +58,9 @@ async def map_ui_state(
         # ==========================================
         # DEBUG ARTIFACT GENERATION
         # ==========================================
+        debug_time = 0.0
         if is_debug:
+            start_debug = time.time()
             timestamp = int(time.time())
             debug_dir = f"shared/debug/states/{state_id}_{timestamp}"
             os.makedirs(debug_dir, exist_ok=True)
@@ -81,6 +83,8 @@ async def map_ui_state(
             # Gemini Center Dots Image
             renderer.draw_gemini_elements(temp_image_path, final_state.model_dump()["elements"], f"{debug_dir}/5_gemini_visual.png")
 
+            debug_time = time.time() - start_debug
+
         os.remove(temp_image_path)
 
         return {
@@ -90,6 +94,7 @@ async def map_ui_state(
             "metrics": {
                 "ocr_time": ocr_time,
                 "llm_time": llm_time,
+                "debug_time": debug_time,
                 "token_usage": token_usage
             }
         }

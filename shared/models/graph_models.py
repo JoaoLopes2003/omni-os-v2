@@ -1,17 +1,77 @@
-from typing import List
 from pydantic import BaseModel, Field
+from typing import List, Optional, Literal, Dict
 
-class MappedElement(BaseModel):
-    """A unified node representing a physical action the agent can take strictly within THIS specific state."""
-    id: str = Field(description="A descriptive string ID (e.g., 'btn_file', 'icon_settings', 'tab_terminal').")
-    text: str = Field(description="The cleaned text of the element, or a brief description if it is an icon.")
-    element_type: str = Field(default="button", description="Must be 'button', 'input', or 'icon'.")
+class BoundingBox(BaseModel):
+    """Absolute coordinates for containers and dynamic grid items."""
+    x: int
+    y: int
+    w: int
+    h: int
+
+class ElementNode(BaseModel):
+    """An interactive or dynamic element inside a container."""
+    id: str = Field(description="Unique snake_case identifier for the element")
+    text: Optional[str] = Field(default=None, description="Visible text, if any")
+    element_type: Literal['button', 'icon', 'input', 'text', 'image', 'dropdown'] = Field(...)
+    description: str = Field(description="Semantic description of what this element does")
     
-    # --- Spatial Data ---
-    center_x: int = Field(description="Normalized X (0-1000) for the physical center of the element.")
-    center_y: int = Field(description="Normalized Y (0-1000) for the physical center of the element.")
+    # Normalized coordinates relative to the parent container (0.0 to 1.0)
+    rel_x: float = Field(description="Center X relative to parent container width")
+    rel_y: float = Field(description="Center Y relative to parent container height")
+    
+    is_dynamic: bool = Field(
+        default=False, 
+        description="True if the content changes frequently (e.g., playing song title, video player)"
+    )
+    
+    # Predictive State Routing
+    opens_container: Optional[str] = Field(
+        default=None, 
+        description="ID of the local container/overlay this reveals when clicked"
+    )
+    navigates_to_view: Optional[str] = Field(
+        default=None, 
+        description="ID of the new global ScreenView this navigates to when clicked"
+    )
 
-class ScreenStateNode(BaseModel):
-    """A self-contained graph node representing a unique, static UI state (The Chrome)."""
-    state_id: str
-    elements: List[MappedElement] = []
+class TemplateNode(BaseModel):
+    """A reusable structure for grid/list items."""
+    template_id: str
+    description: str
+    elements: List[ElementNode] = Field(
+        description="Elements mapped with coordinates relative to the individual item's bounding box"
+    )
+
+class CollectionItem(BaseModel):
+    """An instance of a template mapped to a specific bounding box on the screen."""
+    index: int
+    bbox: BoundingBox
+
+class ContainerNode(BaseModel):
+    """A macro-section of the screen (e.g., Sidebar, Top Nav, Main Body)."""
+    id: str = Field(description="Unique snake_case identifier for the container")
+    description: str = Field(description="Semantic description of the container's purpose")
+    container_type: Literal['standard', 'collection_grid', 'collection_list'] = Field(default='standard')
+    
+    bbox: BoundingBox = Field(description="Absolute OS coordinates of the container")
+    
+    scrollable: Literal['vertical', 'horizontal', 'none'] = Field(default='none')
+    is_overlay: bool = Field(
+        default=False, 
+        description="True if this is a popup/dropdown that requires a click to be visible"
+    )
+    
+    # Standard elements (for standard containers)
+    elements: List[ElementNode] = Field(default_factory=list)
+    
+    # Template properties (for collections/grids)
+    item_template: Optional[TemplateNode] = Field(default=None)
+    items: List[CollectionItem] = Field(default_factory=list)
+
+class ScreenView(BaseModel):
+    """The root Visual DOM for a specific application state."""
+    view_id: str = Field(description="Unique identifier for this application state (e.g., spotify_home)")
+    process_name: str = Field(description="The OS executable name (e.g., spotify.exe, chrome.exe)")
+    description: str = Field(description="What is the user currently looking at and able to do here?")
+    
+    containers: List[ContainerNode] = Field(default_factory=list)

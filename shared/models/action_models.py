@@ -11,15 +11,17 @@ class Action(BaseModel):
         'run_cli_command', 
         'extract_data',
         'save_clipboard_to_memory', 
-        'switch_window', 
+        'switch_window',
+        'scroll_container', 
         'wait', 
         'done', 
         'abort'
     ] = Field(description="The specific type of action to perform.")
     
+    # Updated to support "container_id[index].element_id" notation
     target_id: Optional[str] = Field(
-        default=None, 
-        description="The ID of the static element to click (e.g., 'btn_file'). Use only with 'click_element'."
+        default=None,
+        description="ID of the element to click, or container to scroll. Supports array indexing for collections (e.g., 'suggested_playlists[2].play_button')"
     )
     
     target_x: Optional[int] = Field(
@@ -48,6 +50,14 @@ class Action(BaseModel):
     wait_seconds: Optional[int] = Field(
         default=None,
         description="Seconds to wait for UI to load. Use only with 'wait'."
+    )
+
+    scroll_direction: Optional[Literal['up', 'down', 'left', 'right']] = Field(
+        default=None
+    )
+    scroll_amount: Optional[int] = Field(
+        default=3,
+        description="Number of mouse-wheel ticks"
     )
 
 class ActionPlan(BaseModel):

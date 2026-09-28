@@ -1,17 +1,3 @@
-omni-os-v2/
-├── docker-compose.yml          # Orquestração da camada cognitiva
-├── shared/                     # Código comum (partilhado via symlinks ou pacotes locais)
-│   ├── config/                 # Onde ficará o state_routing.json
-│   └── models/                 # schemas.py e graph_models.py
-├── daemon/                     # O Host Daemon (Corre diretamente no SO)
-│   ├── requirements.txt        # Dependências locais (pyautogui, mss, pywinctl)
-│   ├── main.py                 # O loop principal (Orchestrator) que acabámos de criar
-│   ├── execution/              # driver.py 
-│   └── core/                   # window.py, capture.py, router.py
-└── services/                   # A Camada Cognitiva (Contentores Docker)
-    ├── planner/                # Microserviço Fast Path (Gemini Flash)
-    │   ├── Dockerfile
-    │   └── main.py             # API (ex: FastAPI) que recebe o estado e devolve o plano
-    └── mapper/                 # Microserviço Slow Path (Gemini Pro + EasyOCR)
-        ├── Dockerfile
-        └── main.py             # API que processa a imagem e atualiza o GraphDB
+- How to identify states inside the same window
+- We need containers inside containers to fix the sliding plalists section in Spotify?
+- Should we force the model to output coordinates that are not centered, for instance, for text that starts to be written from the left?
