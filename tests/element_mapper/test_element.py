@@ -69,12 +69,11 @@ def run_automated_element_mapping(file_name: str, limit_containers: int = None):
     
     for i, container in enumerate(containers):
         c_id = container["id"]
-        c_type = container["container_type"]
         c_desc = container["description"]
         bbox = container["bbox"]
         x, y, w, h = bbox["x"], bbox["y"], bbox["w"], bbox["h"]
         
-        print(f"\n[{i+1}/{len(containers)}] Processing Container: '{c_id}' ({c_type})")
+        print(f"\n[{i+1}/{len(containers)}] Processing Container: '{c_id}'")
         
         # Crop the container from the full image
         crop_img = full_img[y:y+h, x:x+w]
@@ -82,10 +81,9 @@ def run_automated_element_mapping(file_name: str, limit_containers: int = None):
         cv2.imwrite(temp_crop_path, crop_img)
         
         # Run Element Extraction
-        final_data, tokens = engine.extract_elements(
+        reasoning, final_data, tokens = engine.extract_elements(
             cropped_image_path=temp_crop_path,
             container_id=c_id,
-            container_type=c_type,
             container_description=c_desc
         )
         
@@ -97,6 +95,7 @@ def run_automated_element_mapping(file_name: str, limit_containers: int = None):
         # Save individual container JSON
         container_payload = {
             "container_id": c_id,
+            "thought_process": reasoning,
             "container_data": final_data,
             "metrics": {"token_usage": tokens, "estimated_cost_usd": cost}
         }
@@ -132,7 +131,7 @@ def run_automated_element_mapping(file_name: str, limit_containers: int = None):
 
 if __name__ == "__main__":
     # Define your variables here
-    TARGET_FILE_NAME = "spotify_test"
+    TARGET_FILE_NAME = "vscode_test"
     LIMIT_CONTAINERS = 15  # Set to None to process all containers in the JSON
     
     run_automated_element_mapping(

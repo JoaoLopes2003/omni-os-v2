@@ -17,8 +17,7 @@ class BBox1000(BaseModel):
 class ExtractedContainer(BaseModel):
     id: str = Field(description="Unique snake_case identifier (e.g., 'left_sidebar', 'playback_controls')")
     description: str = Field(description="Semantic description of the container's purpose")
-    container_type: Literal['standard', 'collection_grid', 'collection_list']
-    scrollable: Literal['vertical', 'horizontal', 'none']
+    scrollable: Literal['vertical', 'horizontal', 'both', 'none']
     bbox_1000: BBox1000
 
 class LayoutExtraction(BaseModel):
@@ -45,14 +44,17 @@ class LayoutEngine:
 Your task is to analyze an application GUI and segment it into non-overlapping macro-containers.
 
 RULES FOR SEGMENTATION:
-1. Divide the UI into major structural blocks: sidebars, top navigation bars, main content areas, playback controls, or status bars.
+1. Divide the UI into major structural blocks: sidebars, top navigation bars, and playback controls. 
+   - CRITICAL: Do not wrap the entire "Main Content Area" into a single massive container. Slice the main content into logical horizontal or vertical sections (e.g., separate a 'Hero Banner' section from a 'Grid Feed' section below it).
 2. DO NOT map individual tiny buttons. Map the CONTAINERS that hold them.
 3. Completely cover the application UI, but containers MUST NOT overlap unless one is a floating overlay/modal.
-4. If a container holds a repeating list or grid of similar items (like songs, emails, or playlist cards), mark container_type as 'collection_list' or 'collection_grid'. Otherwise, use 'standard'.
-5. If a container has a visible scrollbar or content is visibly cut off at the edge, mark scrollable as 'vertical' or 'horizontal'.
+4. SCROLLABILITY & INHERITANCE (CRITICAL): Mark scrollable as 'vertical', 'horizontal', 'both', or 'none'.
+    - Base Rule: Flag it if you see a scrollbar, cut-off content, or if UI conventions strongly imply it (e.g., a main application feed, a sidebar library, or a carousel). Trust your knowledge of standard app layouts.
+    - INHERITANCE: Because you are slicing large scrollable pages into smaller chunks, these chunks MUST inherit the page's scrollability. If the overall main content area scrolls vertically, EVERY container within it (e.g., the Hero Banner, Quick Links) must be marked at least 'vertical', because scrolling the mouse over them moves the page.
+    - MULTI-AXIS: If a chunk internally scrolls horizontally (like a media carousel) AND sits inside a vertically scrollable page, mark it 'both'.
 
 COORDINATE SYSTEM:
-Imagine the image is exactly 1000x1000 units. 
+Imagine the image is exactly 1000x1000 units.
 - [0, 0] is the top-left corner.
 - [1000, 1000] is the bottom-right corner.
 Output ymin, xmin, ymax, xmax using this 0-1000 scale."""
@@ -87,7 +89,6 @@ Output ymin, xmin, ymax, xmax using this 0-1000 scale."""
                 final_containers.append({
                     "id": c.id,
                     "description": c.description,
-                    "container_type": c.container_type,
                     "scrollable": c.scrollable,
                     "is_overlay": False, # Layout engine maps base UI; overlays are temporal
                     "bbox": {

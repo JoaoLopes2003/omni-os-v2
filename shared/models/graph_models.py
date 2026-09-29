@@ -51,20 +51,19 @@ class ContainerNode(BaseModel):
     """A macro-section of the screen (e.g., Sidebar, Top Nav, Main Body)."""
     id: str = Field(description="Unique snake_case identifier for the container")
     description: str = Field(description="Semantic description of the container's purpose")
-    container_type: Literal['standard', 'collection_grid', 'collection_list'] = Field(default='standard')
     
     bbox: BoundingBox = Field(description="Absolute OS coordinates of the container")
     
-    scrollable: Literal['vertical', 'horizontal', 'none'] = Field(default='none')
+    scrollable: Literal['vertical', 'horizontal', 'both', 'none'] = Field(default='none')
     is_overlay: bool = Field(
         default=False, 
         description="True if this is a popup/dropdown that requires a click to be visible"
     )
     
-    # Standard elements (for standard containers)
+    # Standard elements
     elements: List[ElementNode] = Field(default_factory=list)
     
-    # Template properties (for collections/grids)
+    # Template properties
     item_template: Optional[TemplateNode] = Field(default=None)
     items: List[CollectionItem] = Field(default_factory=list)
 

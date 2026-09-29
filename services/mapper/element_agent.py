@@ -14,6 +14,12 @@ class LLMElement(BaseModel):
     text: Optional[str] = Field(default=None, description="Visible text on the element, if any")
     element_type: Literal['button', 'icon', 'input', 'text', 'image', 'dropdown']
     description: str = Field(description="Semantic description of the element")
+
+    # Forces the model to determine alignment
+    text_align: Optional[Literal['left', 'center', 'right']] = Field(
+        default=None, 
+        description="For text/input elements, specify the horizontal text alignment."
+    )
     
     center_x_1000: int = Field(description="Center X coordinate (0-1000) relative to the provided image bounds")
     center_y_1000: int = Field(description="Center Y coordinate (0-1000) relative to the provided image bounds")
@@ -35,9 +41,12 @@ class LLMCollectionItem(BaseModel):
     xmax: int = Field(description="Right edge (0-1000)")
 
 class ContainerExtraction(BaseModel):
-    elements: List[LLMElement] = Field(default_factory=list, description="Populate ONLY if container_type is 'standard'")
-    item_template: Optional[LLMTemplate] = Field(default=None, description="Populate ONLY if container_type is a collection")
-    items: List[LLMCollectionItem] = Field(default_factory=list, description="Bounding boxes of the repeated items (collections only)")
+    thought_process: str = Field(
+        description="Briefly describe the layout. Are these vertical list rows or grid cards? Explicitly state that bounding boxes must span the full width of the text/content before outputting coordinates."
+    )
+    elements: List[LLMElement] = Field(default_factory=list)
+    item_template: Optional[LLMTemplate] = Field(default=None)
+    items: List[LLMCollectionItem] = Field(default_factory=list)
 
 # ==========================================
 # 2. The Element Engine
@@ -52,9 +61,8 @@ class ElementEngine:
         self, 
         cropped_image_path: str, 
         container_id: str, 
-        container_type: str, 
         container_description: str
-    ) -> tuple[dict, dict]:
+    ) -> tuple[str, dict, dict]:
         """Analyzes a cropped container using dynamic padding for extreme aspect ratios."""
         
         with Image.open(cropped_image_path) as img:
@@ -74,8 +82,8 @@ class ElementEngine:
             needs_padding = (target_width != crop_width) or (target_height != crop_height)
             
             if needs_padding:
-                padded_img = Image.new("RGB", (target_width, target_height), (128, 128, 128))
-                padded_img.paste(img, (0, 0))  # Anchor to top-left
+                padded_img = Image.new("RGB", (target_width, target_height), (0, 0, 0))
+                padded_img.paste(img, (0, 0))
                 
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
                     padded_img.save(temp_file, format="PNG")
@@ -86,9 +94,9 @@ class ElementEngine:
         padding_notice = ""
         if needs_padding:
             padding_notice = """
-IMAGE PADDING NOTICE: 
-This UI element had an extreme aspect ratio, so it was padded with a solid gray background to preserve resolution. 
-Only map the UI elements inside the actual application crop located in the top-left corner. Ignore the gray void.
+IMAGE PADDING NOTICE:
+This UI element was padded with a solid black background to preserve resolution. 
+Only map the UI elements inside the actual application crop located in the top-left corner. Ignore the black void completely.
 """
 
         system_instruction = f"""You are the Omni-OS Component Extraction Engine.
@@ -96,18 +104,27 @@ Your task is to map all interactive and highly relevant dynamic elements inside 
 
 CONTAINER CONTEXT:
 - ID: '{container_id}'
-- Type: '{container_type}'
 - Description: '{container_description}'
 {padding_notice}
+{padding_notice}
 RULES:
-1. Coordinate System: Imagine the ENTIRE provided image is exactly 1000x1000 units. Output all coordinates using this 0-1000 scale relative to the image boundaries.
-2. If Type is 'standard': Extract all buttons, icons, text inputs, and major text blocks into the `elements` array. Leave `item_template` and `items` empty.
-3. If Type is 'collection_grid' or 'collection_list': 
-   - Define the structure of ONE repeating card/row in `item_template`. The coordinates inside the template elements must be relative to the CARD'S bounding box (0-1000 scale).
-   - Identify the bounding boxes for every visible card/row in the image and put them in the `items` array using the 0-1000 scale relative to the whole image.
-   - CRITICAL BOUNDING BOX RULE: The bounding box for each item MUST fully enclose the entire visual component (the full icon, text, and padding). DO NOT draw narrow slivers.
-   - Leave the root `elements` array empty.
-4. Do not map purely decorative backgrounds. Map things the user can click, read, or interact with."""
+1. Coordinate System: Imagine the ENTIRE provided image is exactly 1000x1000 units. Output coordinates using this 0-1000 scale relative to the image boundaries.
+2. DYNAMIC COMPONENT STRUCTURING:
+Map the UI using standalone elements, a repeating template, or BOTH, depending on the visual layout:
+- STANDALONE ELEMENTS: Extract unique, non-repeating interactive components (e.g., individual buttons, headers, search bars, toggles) directly into the root `elements` array.
+- REPEATING COLLECTIONS (Lists & Grids): 
+ a) Define ONE representative item's internal structure in `item_template`. Coordinates inside `item_template.elements` must be relative to the ITEM'S bounding box (0-1000 scale).
+ b) Identify the bounding boxes for every visible item in the collection and place them in the `items` array.
+3. CRITICAL BOUNDING BOX GEOMETRY:
+Bounding boxes (`xmin`, `xmax`, `ymin`, `ymax`) MUST encapsulate the ENTIRE perimeter of the item, not just a fragment of it.
+- VISUAL BOUNDARY (Primary Rule): If the items sit inside a distinct visible container (e.g., a card with a different background color, a drawn border, or a dividing line), the bounding box MUST be the exact outer borders of that colored background. Encompass the entire visual card or row.
+- LOGICAL GROUPING (Fallback): If there is no distinct background color or border, the bounding box must span the full physical height and width of the grouped data. It must encapsulate the primary content (whether that is an image, a large number, or a text block) AND all associated metadata (titles, subtitles, timestamps, action buttons) belonging to that specific item. Do not shrink or truncate the box to exclude text.
+4. TEXT ANCHORING RULE (Applies ONLY to `center_x_1000` / `center_y_1000` of internal elements, NOT bounding boxes):
+Text string lengths vary. Never place click coordinates in empty space:
+- For LEFT-ALIGNED text: Anchor center_x_1000 near the START of the text slot (e.g., 5% to 15% past where the text begins). 
+- For RIGHT-ALIGNED text: Anchor center_x_1000 near the END of the text slot (85% to 95%).
+- For CENTERED text: Anchor at the horizontal midpoint (50%).
+5. Do not map purely decorative backgrounds."""
 
         prompt = "Map the interactive components in this container crop."
         uploaded_file = self.client.files.upload(file=process_image_path)
@@ -125,6 +142,8 @@ RULES:
             )
             
             raw_data = response.parsed
+
+            reasoning = raw_data.thought_process
             
             final_data = {
                 "elements": [],
@@ -168,7 +187,7 @@ RULES:
                 "output_tokens": response.usage_metadata.candidates_token_count
             }
 
-            return final_data, token_usage
+            return reasoning, final_data, token_usage
 
         finally:
             self.client.files.delete(name=uploaded_file.name)
@@ -193,6 +212,7 @@ RULES:
             "text": llm_el.text,
             "element_type": llm_el.element_type,
             "description": llm_el.description,
+            "text_align": llm_el.text_align,
             "rel_x": rel_x,
             "rel_y": rel_y,
             "is_dynamic": llm_el.is_dynamic,

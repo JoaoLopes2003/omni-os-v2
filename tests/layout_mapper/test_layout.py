@@ -32,7 +32,7 @@ def test_layout_mapping(image_path: str, process_name: str):
         cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
         
         # Add label background and text
-        label = f"{container['id']} ({container['container_type']})"
+        label = f"{container['id']}"
         cv2.rectangle(img, (x, y-20), (x + len(label)*10, y), (0, 255, 0), -1)
         cv2.putText(img, label, (x+5, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
 
@@ -65,4 +65,4 @@ def test_layout_mapping(image_path: str, process_name: str):
 
 if __name__ == "__main__":
     # Updated path to match the inputs directory structure
-    test_layout_mapping("tests/layout_mapper/inputs/vscode_test_2.png", "spotify.exe")
+    test_layout_mapping("tests/layout_mapper/inputs/vscode_test.png", "spotify.exe")
