@@ -133,9 +133,7 @@ RULES:
      * Example NO: A generic settings menu where "Display" opens a slider page and "Network" opens a toggle list.
 
 3. REPEATING ITEM TEMPLATES (If Rule 2 qualifies as YES):
-   a) Define `collection_bounds`: Draw a bounding box (`xmin`, `xmax`, `ymin`, `ymax` in 0-1000 scale) around the ENTIRE viewport region containing the collection. 
-      - Do NOT tightly shrink-wrap just the text or icons.
-      - The box must capture the FULL interactive footprint of the items. For borderless tabs or lists, extend the bounds outward to the natural UI boundaries (e.g., the nearest divider line, background change, or container edge) that define the clickable area of that collection.
+   a) Define `collection_bounds`: Draw a bounding box (`xmin`, `xmax`, `ymin`, `ymax` in 0-1000 scale) around the ENTIRE viewport region containing the collection. This acts as a masking zone.
    b) Define ONE representative item in `item_template`.
    c) Map its internal parts in `item_template.elements`. Coordinates must be relative to a SINGLE idealized item's bounds (0-1000 scale).
 
