@@ -11,42 +11,53 @@ from PIL import Image
 # ==========================================
 class LLMElement(BaseModel):
     id: str = Field(description="Unique snake_case identifier")
-    text: Optional[str] = Field(default=None, description="Visible text on the element, if any")
+    text: Optional[str] = Field(default=None, description="Visible text if static, or placeholder role if dynamic")
     element_type: Literal['button', 'icon', 'input', 'text', 'image', 'dropdown']
-    description: str = Field(description="Semantic description of the element")
+    description: str = Field(description="Semantic role and behavior of the element")
+    text_align: Optional[Literal['left', 'center', 'right']] = Field(default=None)
+    
+    center_x_1000: int
+    center_y_1000: int
+    
+    is_dynamic: bool = Field(default=False)
+    opens_container: Optional[str] = Field(default=None)
+    navigates_to_view: Optional[str] = Field(default=None)
 
-    # Forces the model to determine alignment
-    text_align: Optional[Literal['left', 'center', 'right']] = Field(
-        default=None, 
-        description="For text/input elements, specify the horizontal text alignment."
-    )
+class LLMTemplateElement(BaseModel):
+    id: str = Field(description="Unique snake_case identifier")
+    element_type: Literal['button', 'icon', 'input', 'text', 'image', 'dropdown']
+    description: str = Field(description="Semantic role of the element")
     
-    center_x_1000: int = Field(description="Center X coordinate (0-1000) relative to the provided image bounds")
-    center_y_1000: int = Field(description="Center Y coordinate (0-1000) relative to the provided image bounds")
+    # Kept for static anchors (e.g., a static "Play" button or "Add" text)
+    is_dynamic: bool = Field(default=True, description="False if this element is identical across all cards")
+    text: Optional[str] = Field(default=None, description="The text, ONLY if is_dynamic is False")
     
-    is_dynamic: bool = Field(default=False, description="True if content changes often (e.g., currently playing song)")
-    opens_container: Optional[str] = Field(default=None, description="ID of popup/menu it opens")
-    navigates_to_view: Optional[str] = Field(default=None, description="ID of new screen it navigates to")
+    # Kept as a lightweight spatial shortcut for the Planner
+    center_x_1000: int = Field(description="Relative center X (0-1000) inside the idealized card")
+    center_y_1000: int = Field(description="Relative center Y (0-1000) inside the idealized card")
+
+class BBox1000(BaseModel):
+    xmin: int
+    ymin: int
+    xmax: int
+    ymax: int
 
 class LLMTemplate(BaseModel):
-    template_id: str
-    description: str
-    elements: List[LLMElement]
-
-class LLMCollectionItem(BaseModel):
-    index: int
-    ymin: int = Field(description="Top edge (0-1000)")
-    xmin: int = Field(description="Left edge (0-1000)")
-    ymax: int = Field(description="Bottom edge (0-1000)")
-    xmax: int = Field(description="Right edge (0-1000)")
+    template_id: str = Field(description="snake_case identifier (e.g. 'playlist_card', 'editor_tab')")
+    description: str = Field(description="Describes what an item in this collection represents and does")
+    
+    collection_bounds: BBox1000 = Field(
+        description="The outer bounding box (0-1000) of the ENTIRE region where these items are displayed. Used for masking dynamic content."
+    )
+    
+    elements: List[LLMTemplateElement] = Field(description="The internal interactive parts of ONE representative item")
 
 class ContainerExtraction(BaseModel):
     thought_process: str = Field(
-        description="Briefly describe the layout. Are these vertical list rows or grid cards? Explicitly state that bounding boxes must span the full width of the text/content before outputting coordinates."
+        description="Analyze the layout. If there is a template, explicitly state the boundaries of the collection_bounds (e.g., 'The tabs are a horizontal strip, so ymin=0, ymax=1000') before generating coordinates."
     )
-    elements: List[LLMElement] = Field(default_factory=list)
-    item_template: Optional[LLMTemplate] = Field(default=None)
-    items: List[LLMCollectionItem] = Field(default_factory=list)
+    elements: List[LLMElement] = Field(default_factory=list, description="Unique, non-repeating static elements")
+    item_template: Optional[LLMTemplate] = Field(default=None, description="Template definition if the container holds repeating items")
 
 # ==========================================
 # 2. The Element Engine
@@ -95,36 +106,51 @@ class ElementEngine:
         if needs_padding:
             padding_notice = """
 IMAGE PADDING NOTICE:
-This UI element was padded with a solid black background to preserve resolution. 
-Only map the UI elements inside the actual application crop located in the top-left corner. Ignore the black void completely.
+This image was padded with a solid black background to preserve resolution. 
+CRITICAL COORDINATE RULE: The 0-1000 coordinate grid applies to the ENTIRE image, INCLUDING the black padding. Do not restrict your 1000 scale to just the UI area. The coordinate 1000 represents the extreme bottom/right of the black void.
 """
 
         system_instruction = f"""You are the Omni-OS Component Extraction Engine.
-Your task is to map all interactive and highly relevant dynamic elements inside a specific UI container.
+Your task is to identify interactive components and repeating behavioral patterns in a UI container.
 
 CONTAINER CONTEXT:
 - ID: '{container_id}'
 - Description: '{container_description}'
 {padding_notice}
-{padding_notice}
+
 RULES:
-1. Coordinate System: Imagine the ENTIRE provided image is exactly 1000x1000 units. Output coordinates using this 0-1000 scale relative to the image boundaries.
-2. DYNAMIC COMPONENT STRUCTURING:
-Map the UI using standalone elements, a repeating template, or BOTH, depending on the visual layout:
-- STANDALONE ELEMENTS: Extract unique, non-repeating interactive components (e.g., individual buttons, headers, search bars, toggles) directly into the root `elements` array.
-- REPEATING COLLECTIONS (Lists & Grids): 
- a) Define ONE representative item's internal structure in `item_template`. Coordinates inside `item_template.elements` must be relative to the ITEM'S bounding box (0-1000 scale).
- b) Identify the bounding boxes for every visible item in the collection and place them in the `items` array.
-3. CRITICAL BOUNDING BOX GEOMETRY:
-Bounding boxes (`xmin`, `xmax`, `ymin`, `ymax`) MUST encapsulate the ENTIRE perimeter of the item, not just a fragment of it.
-- VISUAL BOUNDARY (Primary Rule): If the items sit inside a distinct visible container (e.g., a card with a different background color, a drawn border, or a dividing line), the bounding box MUST be the exact outer borders of that colored background. Encompass the entire visual card or row.
-- LOGICAL GROUPING (Fallback): If there is no distinct background color or border, the bounding box must span the full physical height and width of the grouped data. It must encapsulate the primary content (whether that is an image, a large number, or a text block) AND all associated metadata (titles, subtitles, timestamps, action buttons) belonging to that specific item. Do not shrink or truncate the box to exclude text.
-4. TEXT ANCHORING RULE (Applies ONLY to `center_x_1000` / `center_y_1000` of internal elements, NOT bounding boxes):
-Text string lengths vary. Never place click coordinates in empty space:
-- For LEFT-ALIGNED text: Anchor center_x_1000 near the START of the text slot (e.g., 5% to 15% past where the text begins). 
-- For RIGHT-ALIGNED text: Anchor center_x_1000 near the END of the text slot (85% to 95%).
-- For CENTERED text: Anchor at the horizontal midpoint (50%).
-5. Do not map purely decorative backgrounds."""
+1. COORDINATE SCALE: Use a 0-1000 coordinate scale relative to the image boundaries.
+
+2. STANDALONE ELEMENTS VS TEMPLATES (CRITICAL DEFINITION):
+   The distinction between standalone elements and a template is based strictly on STATE TRANSITIONS, not just visual similarity.
+   
+   - TEMPLATES (Structurally Identical States): Use `item_template` ONLY if interacting with any item in the collection leads to the exact same TYPE of UI view or menu. 
+     * Example YES: A row of playlist cards. (Clicking any card opens a "Playlist View").
+     * Example YES: VS Code editor tabs. (Clicking any tab opens an "Editor View").
+   
+   - STANDALONE (Structurally Distinct States): If a list of visually similar items leads to fundamentally different application states, map each one as a unique item in the root `elements` array. DO NOT use a template.
+     * Example NO: An OS application dock. (Firefox opens a browser, Spotify opens a media player. These are distinct states, map them as standalone `icon` elements).
+     * Example NO: A generic settings menu where "Display" opens a slider page and "Network" opens a toggle list.
+
+3. REPEATING ITEM TEMPLATES (If Rule 2 qualifies as YES):
+   a) Define `collection_bounds`: Draw a bounding box (`xmin`, `xmax`, `ymin`, `ymax` in 0-1000 scale) around the ENTIRE viewport region containing the collection. 
+      - Do NOT tightly shrink-wrap just the text or icons.
+      - The box must capture the FULL interactive footprint of the items. For borderless tabs or lists, extend the bounds outward to the natural UI boundaries (e.g., the nearest divider line, background change, or container edge) that define the clickable area of that collection.
+   b) Define ONE representative item in `item_template`.
+   c) Map its internal parts in `item_template.elements`. Coordinates must be relative to a SINGLE idealized item's bounds (0-1000 scale).
+
+4. COORDINATE ACCURACY & ANCHORING:
+   How you calculate `center_x_1000` and `center_y_1000` depends strictly on whether the element is standalone or inside a template:
+   
+   - FOR STANDALONE ELEMENTS (`elements` array):
+     Target the EXACT physical mathematical center of the element. For buttons, icons, and avatars, the coordinate must land dead-center inside the visible shape. Do not apply offset anchoring.
+     
+   - FOR TEMPLATE ELEMENTS (`item_template.elements`):
+     Ignore variations in text length or slight width differences across real items. Think in terms of layout anchors relative to the idealized item bounds:
+     * Icons/Buttons: Pin them where they are structurally anchored (e.g., "vertically centered on the far left").
+     * Text strings: DO NOT aim for the mathematical center, as text length varies. Anchor `center_x_1000` exactly where the text block BEGINS plus a small safeguard margin (e.g., 10-15% past the left edge).
+
+5. Ignore purely decorative backgrounds."""
 
         prompt = "Map the interactive components in this container crop."
         uploaded_file = self.client.files.upload(file=process_image_path)
@@ -147,40 +173,36 @@ Text string lengths vary. Never place click coordinates in empty space:
             
             final_data = {
                 "elements": [],
-                "item_template": None,
-                "items": []
+                "item_template": None
             }
 
             for el in raw_data.elements:
                 final_data["elements"].append(
-                    self._format_element(el, crop_width, crop_height, target_width, target_height)
+                    self._format_static_element(el, crop_width, crop_height, target_width, target_height)
                 )
 
             if raw_data.item_template:
-                final_data["item_template"] = {
-                    "template_id": raw_data.item_template.template_id,
-                    "description": raw_data.item_template.description,
-                    "elements": [
-                        self._format_element(tel, crop_width, crop_height, target_width, target_height, is_template_child=True) 
-                        for tel in raw_data.item_template.elements
-                    ]
-                }
-
-            for item in raw_data.items:
-                pixel_x = (item.xmin / 1000.0) * target_width
-                pixel_y = (item.ymin / 1000.0) * target_height
-                pixel_x2 = (item.xmax / 1000.0) * target_width
-                pixel_y2 = (item.ymax / 1000.0) * target_height
+                # Denormalize the global collection mask back to original crop pixels
+                cb = raw_data.item_template.collection_bounds
+                pixel_x = (cb.xmin / 1000.0) * target_width
+                pixel_y = (cb.ymin / 1000.0) * target_height
+                pixel_x2 = (cb.xmax / 1000.0) * target_width
+                pixel_y2 = (cb.ymax / 1000.0) * target_height
                 
                 x = max(0, int(pixel_x))
                 y = max(0, int(pixel_y))
                 w = min(crop_width, int(pixel_x2)) - x
                 h = min(crop_height, int(pixel_y2)) - y
-                
-                final_data["items"].append({
-                    "index": item.index,
-                    "bbox": {"x": x, "y": y, "w": w, "h": h}
-                })
+
+                final_data["item_template"] = {
+                    "template_id": raw_data.item_template.template_id,
+                    "description": raw_data.item_template.description,
+                    "collection_bounds": {"x": x, "y": y, "w": w, "h": h},
+                    "elements": [
+                        self._format_template_element(tel) 
+                        for tel in raw_data.item_template.elements
+                    ]
+                }
                 
             token_usage = {
                 "input_tokens": response.usage_metadata.prompt_token_count,
@@ -194,18 +216,14 @@ Text string lengths vary. Never place click coordinates in empty space:
             if needs_padding and os.path.exists(process_image_path):
                 os.remove(process_image_path)
 
-    def _format_element(self, llm_el: LLMElement, crop_width: int, crop_height: int, target_width: int, target_height: int, is_template_child: bool = False) -> dict:
-        """Denormalizes dynamically padded coordinates back to original crop relative ratios."""
+    def _format_static_element(self, llm_el: LLMElement, crop_width: int, crop_height: int, target_width: int, target_height: int) -> dict:
+        """Denormalizes dynamically padded coordinates back to original crop relative ratios for static elements."""
         
-        if is_template_child:
-            rel_x = round(llm_el.center_x_1000 / 1000.0, 4)
-            rel_y = round(llm_el.center_y_1000 / 1000.0, 4)
-        else:
-            pixel_x = (llm_el.center_x_1000 / 1000.0) * target_width
-            pixel_y = (llm_el.center_y_1000 / 1000.0) * target_height
-            
-            rel_x = max(0.0, min(1.0, round(pixel_x / crop_width, 4)))
-            rel_y = max(0.0, min(1.0, round(pixel_y / crop_height, 4)))
+        pixel_x = (llm_el.center_x_1000 / 1000.0) * target_width
+        pixel_y = (llm_el.center_y_1000 / 1000.0) * target_height
+        
+        rel_x = max(0.0, min(1.0, round(pixel_x / crop_width, 4)))
+        rel_y = max(0.0, min(1.0, round(pixel_y / crop_height, 4)))
 
         return {
             "id": llm_el.id,
@@ -218,4 +236,17 @@ Text string lengths vary. Never place click coordinates in empty space:
             "is_dynamic": llm_el.is_dynamic,
             "opens_container": llm_el.opens_container,
             "navigates_to_view": llm_el.navigates_to_view
+        }
+
+    def _format_template_element(self, llm_tel: LLMTemplateElement) -> dict:
+        """Processes template elements, keeping coordinates strictly internal/relative."""
+        
+        return {
+            "id": llm_tel.id,
+            "text": llm_tel.text,
+            "element_type": llm_tel.element_type,
+            "description": llm_tel.description,
+            "rel_x": round(llm_tel.center_x_1000 / 1000.0, 4),
+            "rel_y": round(llm_tel.center_y_1000 / 1000.0, 4),
+            "is_dynamic": llm_tel.is_dynamic
         }

@@ -34,18 +34,29 @@ class ElementNode(BaseModel):
         description="ID of the new global ScreenView this navigates to when clicked"
     )
 
+class TemplateElementNode(BaseModel):
+    """An interactive part of a template card."""
+    id: str = Field(description="Unique snake_case identifier")
+    text: Optional[str] = Field(default=None, description="The text, ONLY if is_dynamic is False")
+    element_type: Literal['button', 'icon', 'input', 'text', 'image', 'dropdown'] = Field(...)
+    description: str = Field(description="Semantic role of the element")
+    
+    # Coordinates relative to the IDEALIZED single item, not the container
+    rel_x: float = Field(description="Center X relative to idealized item width")
+    rel_y: float = Field(description="Center Y relative to idealized item height")
+    
+    is_dynamic: bool = Field(default=True, description="False if this element is identical across all cards")
+
 class TemplateNode(BaseModel):
     """A reusable structure for grid/list items."""
     template_id: str
     description: str
-    elements: List[ElementNode] = Field(
-        description="Elements mapped with coordinates relative to the individual item's bounding box"
+    collection_bounds: BoundingBox = Field(
+        description="The outer bounding box of the entire region where these items are displayed."
     )
-
-class CollectionItem(BaseModel):
-    """An instance of a template mapped to a specific bounding box on the screen."""
-    index: int
-    bbox: BoundingBox
+    elements: List[TemplateElementNode] = Field(
+        description="Elements mapped with coordinates relative to a single idealized item's bounds"
+    )
 
 class ContainerNode(BaseModel):
     """A macro-section of the screen (e.g., Sidebar, Top Nav, Main Body)."""
@@ -65,7 +76,6 @@ class ContainerNode(BaseModel):
     
     # Template properties
     item_template: Optional[TemplateNode] = Field(default=None)
-    items: List[CollectionItem] = Field(default_factory=list)
 
 class ScreenView(BaseModel):
     """The root Visual DOM for a specific application state."""

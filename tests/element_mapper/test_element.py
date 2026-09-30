@@ -8,7 +8,7 @@ from services.mapper.element_agent import ElementEngine
 load_dotenv(find_dotenv())
 
 def draw_elements(img, data, w, h, offset_x=0, offset_y=0):
-    """Draws standard elements and collection templates onto an image."""
+    """Draws standard elements and the template collection mask onto an image."""
     # Draw Standard Elements
     for el in data.get("elements", []):
         cx = offset_x + int(el["rel_x"] * w)
@@ -16,34 +16,32 @@ def draw_elements(img, data, w, h, offset_x=0, offset_y=0):
         cv2.circle(img, (cx, cy), 5, (0, 0, 255), -1)
         cv2.putText(img, el["id"], (cx + 8, cy + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
 
-    # Draw Templates and Items (Collection Grids/Lists)
+    # Draw Template Collection Bounds (Masking Zone)
     template = data.get("item_template")
-    items = data.get("items", [])
-    
-    if template and items:
-        for item in items:
-            bbox = item["bbox"]
-            # Item bbox is relative to the container, so we add the offset
-            bx = offset_x + bbox["x"]
-            by = offset_y + bbox["y"]
-            bw = bbox["w"]
-            bh = bbox["h"]
-            
-            # Draw Item Bounding Box
-            cv2.rectangle(img, (bx, by), (bx + bw, by + bh), (255, 165, 0), 2)
-            cv2.putText(img, f"Item {item['index']}", (bx + 2, by + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 165, 0), 1)
-            
-            # Draw internal template elements for this specific item
-            for tel in template.get("elements", []):
-                tcx = bx + int(tel["rel_x"] * bw)
-                tcy = by + int(tel["rel_y"] * bh)
-                cv2.circle(img, (tcx, tcy), 4, (255, 0, 0), -1)
-                cv2.putText(img, tel["id"], (tcx + 6, tcy + 3), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 0, 0), 1)
+    if template and "collection_bounds" in template:
+        cb = template["collection_bounds"]
+        bx = offset_x + cb["x"]
+        by = offset_y + cb["y"]
+        bw = cb["w"]
+        bh = cb["h"]
+        
+        # Draw the masking zone in magenta
+        cv2.rectangle(img, (bx, by), (bx + bw, by + bh), (255, 0, 255), 2)
+        
+        # Add a semi-transparent overlay for visual verification of the mask
+        overlay = img.copy()
+        cv2.rectangle(overlay, (bx, by), (bx + bw, by + bh), (255, 0, 255), -1)
+        cv2.addWeighted(overlay, 0.15, img, 0.85, 0, img)
+        
+        label = f"Template Zone: {template.get('template_id', 'collection')}"
+        cv2.putText(img, label, (bx + 2, by + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
 
 def run_automated_element_mapping(file_name: str, limit_containers: int = None):
-    layout_dir = "tests/layout_mapper/outputs"
-    img_path = os.path.join(layout_dir, f"{file_name}.png")
-    json_path = os.path.join(layout_dir, f"{file_name}.json")
+    img_dir = "tests/layout_mapper/inputs"
+    json_dir = "tests/layout_mapper/outputs"
+
+    img_path = os.path.join(img_dir, f"{file_name}.png")
+    json_path = os.path.join(json_dir, f"{file_name}.json")
     
     output_dir = os.path.join("tests/element_mapper/outputs", file_name)
     os.makedirs(output_dir, exist_ok=True)
@@ -131,7 +129,7 @@ def run_automated_element_mapping(file_name: str, limit_containers: int = None):
 
 if __name__ == "__main__":
     # Define your variables here
-    TARGET_FILE_NAME = "vscode_test"
+    TARGET_FILE_NAME = "spotify_test"
     LIMIT_CONTAINERS = 15  # Set to None to process all containers in the JSON
     
     run_automated_element_mapping(
