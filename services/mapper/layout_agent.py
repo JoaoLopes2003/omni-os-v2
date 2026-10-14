@@ -18,6 +18,13 @@ class ExtractedContainer(BaseModel):
     id: str = Field(description="Unique snake_case identifier (e.g., 'left_sidebar', 'playback_controls')")
     description: str = Field(description="Semantic description of the container's purpose")
     scrollable: Literal['vertical', 'horizontal', 'both', 'none']
+    is_volatile: bool = Field(
+        default=False,
+        description="True ONLY if this container holds autonomous live data (video, clock, animation). False for standard UI, including carousels/lists."
+    )
+    spatial_thought_process: str = Field(
+        description="Explicitly state the natural visual boundaries of this container. (e.g., 'Starts below the top nav bar, ends at the left sidebar divider')."
+    )
     bbox_1000: BBox1000
 
 class LayoutExtraction(BaseModel):
@@ -52,6 +59,13 @@ RULES FOR SEGMENTATION:
     - Base Rule: Flag it if you see a scrollbar, cut-off content, or if UI conventions strongly imply it (e.g., a main application feed, a sidebar library, or a carousel). Trust your knowledge of standard app layouts.
     - INHERITANCE: Because you are slicing large scrollable pages into smaller chunks, these chunks MUST inherit the page's scrollability. If the overall main content area scrolls vertically, EVERY container within it (e.g., the Hero Banner, Quick Links) must be marked at least 'vertical', because scrolling the mouse over them moves the page.
     - MULTI-AXIS: If a chunk internally scrolls horizontally (like a media carousel) AND sits inside a vertically scrollable page, mark it 'both'.
+5. VOLATILE CONTAINERS (`is_volatile`):
+   Flag containers that are entirely composed of shifting data or autonomous pixels.
+   - Example YES (True): Unstructured Data Canvases (code editor text areas, terminal outputs, whiteboard canvases, minimaps views, image/document preview viewers).
+   - Example YES (`True`): Autonomous live media (playing video, animated ad banners, live audio waveforms).
+   - Example NO (`False`): Static configuration docks, sidebars, or containers holding structural templates (like file lists or media card grids).
+6. BOUNDARY ANCHORING:
+   Use `spatial_thought_process` to identify the exact visual dividers (lines, background color changes, edges) that frame the container before predicting the 1000-scale coordinates. Containers MUST NOT overlap.
 
 COORDINATE SYSTEM:
 Imagine the image is exactly 1000x1000 units.
@@ -77,25 +91,26 @@ Output ymin, xmin, ymax, xmax using this 0-1000 scale."""
             
             raw_data = response.parsed
             
-            # Convert 1000-scale to Absolute OS Coordinates (x, y, w, h)
+            # Convert 1000-scale to Relative Coordinates (0.0 to 1.0)
             final_containers = []
             for c in raw_data.containers:
-                # Math: (normalized_val / 1000) * real_dimension
-                x = int((c.bbox_1000.xmin / 1000.0) * real_width)
-                y = int((c.bbox_1000.ymin / 1000.0) * real_height)
-                x2 = int((c.bbox_1000.xmax / 1000.0) * real_width)
-                y2 = int((c.bbox_1000.ymax / 1000.0) * real_height)
+                rel_x = round(c.bbox_1000.xmin / 1000.0, 4)
+                rel_y = round(c.bbox_1000.ymin / 1000.0, 4)
+                rel_w = round((c.bbox_1000.xmax - c.bbox_1000.xmin) / 1000.0, 4)
+                rel_h = round((c.bbox_1000.ymax - c.bbox_1000.ymin) / 1000.0, 4)
                 
                 final_containers.append({
                     "id": c.id,
                     "description": c.description,
                     "scrollable": c.scrollable,
-                    "is_overlay": False, # Layout engine maps base UI; overlays are temporal
+                    "is_overlay": False,
+                    "is_volatile": c.is_volatile,
+                    "spatial_thought_process": c.spatial_thought_process,
                     "bbox": {
-                        "x": x,
-                        "y": y,
-                        "w": x2 - x,
-                        "h": y2 - y
+                        "x": rel_x,
+                        "y": rel_y,
+                        "w": rel_w,
+                        "h": rel_h
                     },
                     "elements": [],
                     "items": []

@@ -9,26 +9,28 @@ load_dotenv(find_dotenv())
 
 def draw_elements(img, data, w, h, offset_x=0, offset_y=0):
     """Draws standard elements and the template collection mask onto an image."""
-    # Draw Standard Elements
+    # Draw Standard Elements (Already using relative math, no changes needed here)
     for el in data.get("elements", []):
         cx = offset_x + int(el["rel_x"] * w)
         cy = offset_y + int(el["rel_y"] * h)
         cv2.circle(img, (cx, cy), 5, (0, 0, 255), -1)
         cv2.putText(img, el["id"], (cx + 8, cy + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
 
-    # Draw Template Collection Bounds (Masking Zone)
+    # Draw Template Collection Bounds
     template = data.get("item_template")
     if template and "collection_bounds" in template:
         cb = template["collection_bounds"]
-        bx = offset_x + cb["x"]
-        by = offset_y + cb["y"]
-        bw = cb["w"]
-        bh = cb["h"]
+        
+        # Convert relative template bounds back to absolute pixels based on the crop size
+        bx = offset_x + int(cb["x"] * w)
+        by = offset_y + int(cb["y"] * h)
+        bw = int(cb["w"] * w)
+        bh = int(cb["h"] * h)
         
         # Draw the masking zone in magenta
         cv2.rectangle(img, (bx, by), (bx + bw, by + bh), (255, 0, 255), 2)
         
-        # Add a semi-transparent overlay for visual verification of the mask
+        # Add a semi-transparent overlay
         overlay = img.copy()
         cv2.rectangle(overlay, (bx, by), (bx + bw, by + bh), (255, 0, 255), -1)
         cv2.addWeighted(overlay, 0.15, img, 0.85, 0, img)
@@ -59,17 +61,24 @@ def run_automated_element_mapping(file_name: str, limit_containers: int = None):
         print(f"Error: Could not load image at {img_path}")
         return
         
+    img_h, img_w = full_img.shape[:2]  # Get absolute dimensions
     full_img_drawn = full_img.copy()
     engine = ElementEngine()
     
     total_cost = 0.0
     total_tokens = {"input_tokens": 0, "output_tokens": 0}
+    unified_container_outputs = []
     
     for i, container in enumerate(containers):
         c_id = container["id"]
         c_desc = container["description"]
         bbox = container["bbox"]
-        x, y, w, h = bbox["x"], bbox["y"], bbox["w"], bbox["h"]
+        
+        # Convert layout relative coordinates to absolute pixels for cropping
+        x = int(bbox["x"] * img_w)
+        y = int(bbox["y"] * img_h)
+        w = int(bbox["w"] * img_w)
+        h = int(bbox["h"] * img_h)
         
         print(f"\n[{i+1}/{len(containers)}] Processing Container: '{c_id}'")
         
@@ -90,13 +99,14 @@ def run_automated_element_mapping(file_name: str, limit_containers: int = None):
         total_tokens["input_tokens"] += tokens["input_tokens"]
         total_tokens["output_tokens"] += tokens["output_tokens"]
         
-        # Save individual container JSON
         container_payload = {
             "container_id": c_id,
             "thought_process": reasoning,
             "container_data": final_data,
             "metrics": {"token_usage": tokens, "estimated_cost_usd": cost}
         }
+        unified_container_outputs.append(container_payload)
+        
         json_out_path = os.path.join(output_dir, f"{c_id}.json")
         with open(json_out_path, "w", encoding="utf-8") as f:
             json.dump(container_payload, f, indent=2)
@@ -110,7 +120,6 @@ def run_automated_element_mapping(file_name: str, limit_containers: int = None):
         # Draw on the full master image
         draw_elements(full_img_drawn, final_data, w, h, offset_x=x, offset_y=y)
         
-        # Clean up the raw temporary crop
         if os.path.exists(temp_crop_path):
             os.remove(temp_crop_path)
             
@@ -120,19 +129,28 @@ def run_automated_element_mapping(file_name: str, limit_containers: int = None):
     master_img_path = os.path.join(output_dir, f"{file_name}_full_mapped.png")
     cv2.imwrite(master_img_path, full_img_drawn)
     
+    # Save the unified elements JSON map
+    unified_payload = {
+        "view_id": file_name,
+        "container_outputs": unified_container_outputs,
+        "session_metrics": {
+            "total_tokens": total_tokens,
+            "total_cost_usd": total_cost
+        }
+    }
+    unified_json_path = os.path.join(output_dir, f"{file_name}_elements.json")
+    with open(unified_json_path, "w", encoding="utf-8") as f:
+        json.dump(unified_payload, f, indent=2)
+    
     print("\n==========================================")
     print("Element Mapping Complete!")
     print(f"Master Image saved to: {master_img_path}")
+    print(f"Unified Element Map saved to: {unified_json_path}")
     print(f"Total Tokens Used: {total_tokens}")
     print(f"Total Session Cost: ${total_cost:.6f}")
     print("==========================================")
 
 if __name__ == "__main__":
-    # Define your variables here
-    TARGET_FILE_NAME = "spotify_test"
-    LIMIT_CONTAINERS = 15  # Set to None to process all containers in the JSON
-    
-    run_automated_element_mapping(
-        file_name=TARGET_FILE_NAME, 
-        limit_containers=LIMIT_CONTAINERS
-    )
+    TARGET_FILE_NAME = "vscode_test"
+    LIMIT_CONTAINERS = 15
+    run_automated_element_mapping(file_name=TARGET_FILE_NAME, limit_containers=LIMIT_CONTAINERS)

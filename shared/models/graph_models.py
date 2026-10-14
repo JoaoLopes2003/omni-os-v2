@@ -19,11 +19,6 @@ class ElementNode(BaseModel):
     rel_x: float = Field(description="Center X relative to parent container width")
     rel_y: float = Field(description="Center Y relative to parent container height")
     
-    is_dynamic: bool = Field(
-        default=False, 
-        description="True if the content changes frequently (e.g., playing song title, video player)"
-    )
-    
     # Predictive State Routing
     opens_container: Optional[str] = Field(
         default=None, 
@@ -44,8 +39,6 @@ class TemplateElementNode(BaseModel):
     # Coordinates relative to the IDEALIZED single item, not the container
     rel_x: float = Field(description="Center X relative to idealized item width")
     rel_y: float = Field(description="Center Y relative to idealized item height")
-    
-    is_dynamic: bool = Field(default=True, description="False if this element is identical across all cards")
 
 class TemplateNode(BaseModel):
     """A reusable structure for grid/list items."""
@@ -66,6 +59,12 @@ class ContainerNode(BaseModel):
     bbox: BoundingBox = Field(description="Absolute OS coordinates of the container")
     
     scrollable: Literal['vertical', 'horizontal', 'both', 'none'] = Field(default='none')
+
+    is_volatile: bool = Field(
+        default=False,
+        description="True ONLY if this container holds autonomous live data that changes without user interaction (e.g., video players, system clocks, live graphs). False for normal UI."
+    )
+
     is_overlay: bool = Field(
         default=False, 
         description="True if this is a popup/dropdown that requires a click to be visible"

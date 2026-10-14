@@ -23,10 +23,16 @@ def test_layout_mapping(image_path: str, process_name: str):
     
     # Draw the results to verify accuracy
     img = cv2.imread(image_path)
+    img_h, img_w = img.shape[:2]
     
     for container in final_view["containers"]:
         bbox = container["bbox"]
-        x, y, w, h = bbox["x"], bbox["y"], bbox["w"], bbox["h"]
+        
+        # Convert universal relative floats to absolute pixels for drawing
+        x = int(bbox["x"] * img_w)
+        y = int(bbox["y"] * img_h)
+        w = int(bbox["w"] * img_w)
+        h = int(bbox["h"] * img_h)
         
         # Draw bounding box
         cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
@@ -65,4 +71,4 @@ def test_layout_mapping(image_path: str, process_name: str):
 
 if __name__ == "__main__":
     # Updated path to match the inputs directory structure
-    test_layout_mapping("tests/layout_mapper/inputs/vscode_test.png", "spotify.exe")
+    test_layout_mapping("tests/layout_mapper/inputs/spotify_test.png", "spotify.exe")

@@ -19,7 +19,6 @@ class LLMElement(BaseModel):
     center_x_1000: int
     center_y_1000: int
     
-    is_dynamic: bool = Field(default=False)
     opens_container: Optional[str] = Field(default=None)
     navigates_to_view: Optional[str] = Field(default=None)
 
@@ -29,7 +28,6 @@ class LLMTemplateElement(BaseModel):
     description: str = Field(description="Semantic role of the element")
     
     # Kept for static anchors (e.g., a static "Play" button or "Add" text)
-    is_dynamic: bool = Field(default=True, description="False if this element is identical across all cards")
     text: Optional[str] = Field(default=None, description="The text, ONLY if is_dynamic is False")
     
     # Kept as a lightweight spatial shortcut for the Planner
@@ -54,7 +52,7 @@ class LLMTemplate(BaseModel):
 
 class ContainerExtraction(BaseModel):
     thought_process: str = Field(
-        description="Analyze the layout. If there is a template, explicitly state the boundaries of the collection_bounds (e.g., 'The tabs are a horizontal strip, so ymin=0, ymax=1000') before generating coordinates."
+        description="Step 1: List all standalone interactive elements. Step 2: Identify if a repeating template exists. Step 3: If yes, describe the template's outer boundaries before outputting coordinates."
     )
     elements: List[LLMElement] = Field(default_factory=list, description="Unique, non-repeating static elements")
     item_template: Optional[LLMTemplate] = Field(default=None, description="Template definition if the container holds repeating items")
@@ -121,23 +119,28 @@ CONTAINER CONTEXT:
 RULES:
 1. COORDINATE SCALE: Use a 0-1000 coordinate scale relative to the image boundaries.
 
-2. STANDALONE ELEMENTS VS TEMPLATES (CRITICAL DEFINITION):
-   The distinction between standalone elements and a template is based strictly on STATE TRANSITIONS, not just visual similarity.
-   
-   - TEMPLATES (Structurally Identical States): Use `item_template` ONLY if interacting with any item in the collection leads to the exact same TYPE of UI view or menu. 
+2. WHAT IS A "STATE"?
+   A "state" is a distinct UI layout, menu, overlay, or application window. 
+   - Opening different apps (Spotify vs Firefox) = Different States.
+   - Opening a display settings panel vs a network settings panel = Different States.
+   - Clicking different songs in a playlist (data changes, layout remains the same) = SAME State.
+
+3. STANDALONE VS TEMPLATES (CRITICAL DEFINITION):
+   Scan for BOTH standalone elements and templates. DO NOT map raw data rows (e.g., lines of code) or purely decorative backgrounds.
+
+   - STANDALONE ELEMENTS (Structurally Distinct States): Map unique controls that lead to fundamentally different UI layouts. For standalone items, ONLY map elements that trigger a UI action or state change. DO NOT map purely informative static text (e.g., page headers like "About the artist" or "Now Playing").
+     * Example NO (Don't use template): OS App Dock. (Firefox opens a browser, Spotify opens a media player. These are distinct states. Map them as standalone `icon` elements).
+
+   - TEMPLATES (Structurally Identical States): Use `item_template` ONLY if interacting with any item in the collection leads to the exact same TYPE of UI view or menu.
      * Example YES: A row of playlist cards. (Clicking any card opens a "Playlist View").
-     * Example YES: VS Code editor tabs. (Clicking any tab opens an "Editor View").
-   
-   - STANDALONE (Structurally Distinct States): If a list of visually similar items leads to fundamentally different application states, map each one as a unique item in the root `elements` array. DO NOT use a template.
-     * Example NO: An OS application dock. (Firefox opens a browser, Spotify opens a media player. These are distinct states, map them as standalone `icon` elements).
-     * Example NO: A generic settings menu where "Display" opens a slider page and "Network" opens a toggle list.
+     * - Example YES: VS Code editor tabs. (Clicking any tab opens an "Editor View").
 
-3. REPEATING ITEM TEMPLATES (If Rule 2 qualifies as YES):
-   a) Define `collection_bounds`: Draw a bounding box (`xmin`, `xmax`, `ymin`, `ymax` in 0-1000 scale) around the ENTIRE viewport region containing the collection. This acts as a masking zone.
+4. REPEATING ITEM TEMPLATES (If Rule 3 qualifies as YES):
+   a) Define `collection_bounds`: Draw a bounding box (`xmin`, `xmax`, `ymin`, `ymax` in 0-1000 scale) around the ENTIRE viewport region containing the collection. Capture the FULL interactive footprint. For borderless tabs or lists, extend bounds to the natural UI boundaries (nearest divider line, container edges).
    b) Define ONE representative item in `item_template`.
-   c) Map its internal parts in `item_template.elements`. Coordinates must be relative to a SINGLE idealized item's bounds (0-1000 scale).
+   c) Map its internal parts in `item_template.elements`. UNLIKE standalone elements, inside a template YOU MUST INCLUDE both the actionable buttons AND the primary identifying visual/text anchors (e.g., thumbnail, title). These anchors are required so the system can distinguish between items, even if they do not trigger a separate action from the card itself. Coordinates must be relative to a SINGLE idealized item's bounds (0-1000 scale).
 
-4. COORDINATE ACCURACY & ANCHORING:
+5. COORDINATE ACCURACY & ANCHORING:
    How you calculate `center_x_1000` and `center_y_1000` depends strictly on whether the element is standalone or inside a template:
    
    - FOR STANDALONE ELEMENTS (`elements` array):
@@ -146,9 +149,7 @@ RULES:
    - FOR TEMPLATE ELEMENTS (`item_template.elements`):
      Ignore variations in text length or slight width differences across real items. Think in terms of layout anchors relative to the idealized item bounds:
      * Icons/Buttons: Pin them where they are structurally anchored (e.g., "vertically centered on the far left").
-     * Text strings: DO NOT aim for the mathematical center, as text length varies. Anchor `center_x_1000` exactly where the text block BEGINS plus a small safeguard margin (e.g., 10-15% past the left edge).
-
-5. Ignore purely decorative backgrounds."""
+     * Text strings: DO NOT aim for the mathematical center, as text length varies. Anchor `center_x_1000` exactly where the text block BEGINS plus a small safeguard margin (e.g., 10-15% past the left edge)."""
 
         prompt = "Map the interactive components in this container crop."
         uploaded_file = self.client.files.upload(file=process_image_path)
@@ -187,15 +188,22 @@ RULES:
                 pixel_x2 = (cb.xmax / 1000.0) * target_width
                 pixel_y2 = (cb.ymax / 1000.0) * target_height
                 
-                x = max(0, int(pixel_x))
-                y = max(0, int(pixel_y))
-                w = min(crop_width, int(pixel_x2)) - x
-                h = min(crop_height, int(pixel_y2)) - y
+                # Clamp to remove any padding
+                x_abs = max(0, int(pixel_x))
+                y_abs = max(0, int(pixel_y))
+                w_abs = min(crop_width, int(pixel_x2)) - x_abs
+                h_abs = min(crop_height, int(pixel_y2)) - y_abs
 
+                # Convert to Relative Coordinates (0.0 to 1.0) relative to the container crop
                 final_data["item_template"] = {
                     "template_id": raw_data.item_template.template_id,
                     "description": raw_data.item_template.description,
-                    "collection_bounds": {"x": x, "y": y, "w": w, "h": h},
+                    "collection_bounds": {
+                        "x": round(x_abs / crop_width, 4), 
+                        "y": round(y_abs / crop_height, 4), 
+                        "w": round(w_abs / crop_width, 4), 
+                        "h": round(h_abs / crop_height, 4)
+                    },
                     "elements": [
                         self._format_template_element(tel) 
                         for tel in raw_data.item_template.elements
@@ -231,7 +239,6 @@ RULES:
             "text_align": llm_el.text_align,
             "rel_x": rel_x,
             "rel_y": rel_y,
-            "is_dynamic": llm_el.is_dynamic,
             "opens_container": llm_el.opens_container,
             "navigates_to_view": llm_el.navigates_to_view
         }
@@ -245,6 +252,5 @@ RULES:
             "element_type": llm_tel.element_type,
             "description": llm_tel.description,
             "rel_x": round(llm_tel.center_x_1000 / 1000.0, 4),
-            "rel_y": round(llm_tel.center_y_1000 / 1000.0, 4),
-            "is_dynamic": llm_tel.is_dynamic
+            "rel_y": round(llm_tel.center_y_1000 / 1000.0, 4)
         }
