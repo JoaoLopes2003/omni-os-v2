@@ -1,86 +1,43 @@
-from google import genai
-from google.genai import types
-from pydantic import BaseModel
-from typing import List
-import json
-from PIL import Image
+# Inside services/mapper/mapper_agent.py
 
-# Adjust imports based on your monorepo structure
-from shared.models.graph_models import MappedElement, ScreenStateNode
-from shared.core.graph_db import GraphDatabase
+# 1. Cold-Start (0 Memory): Baseline prompts & schemas are 100% untouched
+layout_view, _ = layout_engine.extract_layout(
+    image_path=frame_t_path,
+    process_name="spotify",
+    is_masked_update=False,
+)
+for container in layout_view["containers"]:
+    crop_path = crop_container(frame_t_path, container["bbox"])
+    reasoning, extraction, _ = element_engine.extract_elements(
+        cropped_image_path=crop_path,
+        container_id=container["id"],
+        container_description=container["description"],
+        candidates=None,
+        enable_candidate_matching=False,  # <-- Exact original prompt & schema
+    )
+    library.upsert_from_extraction(container, extraction, bgr_t_target)
 
-class MapperOutput(BaseModel):
-    """Temporary schema strictly for forcing the LLM to output a list of elements."""
-    elements: List[MappedElement]
-
-class MapperAgent:
-    def __init__(self, api_key: str):
-        # Initialize the modern Gemini Client
-        self.client = genai.Client(api_key=api_key)
-        self.db = GraphDatabase(db_dir="shared/data/states")
-
-    def generate_state_map(self, image_path: str, window_title: str, state_id: str, raw_ocr_data: list[dict]) -> tuple[ScreenStateNode, str, dict[str, int]]:
-        """
-        Analyzes the clean UI and raw OCR data to generate a mapped ScreenStateNode.
-        """
-        
-        system_instruction = f"""You are an expert OS UI Cartographer. Your job is to map the interactable elements of a software interface.
-The current active window title is: '{window_title}'.
-
-Your tasks:
-1. Chrome vs Canvas Filtering: You must ONLY map static UI elements (The "Chrome"). 
-    - DO MAP: Navigation bars, menu ribbons, permanent sidebars, toolbars, and system icons.
-    - DO NOT MAP: Highly dynamic content (The "Canvas") such as file directory trees, open tabs, code/text editor contents, web page bodies, or terminal outputs. Completely ignore OCR data that falls inside these dynamic zones.
-2. Data Cleaning: Merge fragmented OCR text into cohesive logical elements. 
-    - Use the bounding box coordinates to determine if words are on the same line or inside the same button.
-    - If confidence is low but the text visually matches a UI element in the image, correct the text and map it. Ignore pure visual artifacts.
-    - For your FINAL output, calculate `center_x` and `center_y` by finding the middle of the bounding box (or the merged bounding boxes).
-3. Icon Discovery: Look at the clean image and identify interactable icons in the static Chrome that do NOT have text (e.g., a gear icon, explorer icon, window controls). 
-    - Assign them a descriptive string `id` (e.g., "icon_settings", "icon_explorer").
-    - Estimate their `center_x` and `center_y` (0-1000) using the OCR text coordinates as spatial landmarks.
-
-I am providing you with:
-1. A CLEAN, unmodified screenshot of the UI.
-2. A JSON list of raw OCR text detections containing their normalized bounding boxes [xmin, ymin, xmax, ymax] (0-1000 scale) and confidence scores.
-
-Raw OCR Data (X,Y are 0-1000 normalized):
-{json.dumps(raw_ocr_data, indent=2)}"""
-
-        # Load the image using PIL (The modern SDK handles the bytes automatically)
-        img = Image.open(image_path)
-
-        print(f"[Mapper API] Analyzing state '{state_id}' via Gemini 1.5 Pro...")
-        
-        # Call the standard models API with GenerateContentConfig
-        response = self.client.models.generate_content(
-            model="gemini-3.1-pro-preview",
-            contents=[system_instruction, img],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=MapperOutput
-            )
-        )
-        
-        # Parse the guaranteed JSON output back into our temporary Pydantic model
-        mapper_result = MapperOutput.model_validate_json(response.text)
-        
-        # ==========================================
-        # DETERMINISTIC STATE ASSEMBLY
-        # ==========================================
-        # We use the state_id passed by the Daemon, eliminating hallucination risk.
-        final_state = ScreenStateNode(
-            state_id=state_id,
-            elements=mapper_result.elements
-        )
-        
-        # Persist the final, clean graph to the database
-        self.db.save_state(final_state)
-        print(f"[Mapper] Successfully mapped {len(final_state.elements)} elements for '{state_id}'.")
-
-        # Extract token usage
-        token_usage = {
-            "input_tokens": response.usage_metadata.prompt_token_count,
-            "output_tokens": response.usage_metadata.candidates_token_count
-        }
-        
-        return final_state, token_usage
+# 2. Incremental Update at T+1 (when StateTransitionTracker reports unexplained regions):
+masked_t1_path = library.build_masked_image(
+    frame_t1_path=frame_t1_path,
+    verified_containers=verified_intact_containers,
+    unmasked_holes_norm=[result.target_crop_bbox] if result.target_crop_bbox else None,
+)
+inc_view, _ = layout_engine.extract_layout(
+    image_path=masked_t1_path,
+    process_name="spotify",
+    is_masked_update=True,
+)
+for new_c in inc_view["containers"]:
+    top_candidates = library.get_top_candidates(new_c, action_context=last_action_ctx, top_n=3)
+    crop_path = crop_container(frame_t1_path, new_c["bbox"])
+    reasoning, extraction, _ = element_engine.extract_elements(
+        cropped_image_path=crop_path,
+        container_id=new_c["id"],
+        container_description=new_c["description"],
+        candidates=top_candidates,
+        enable_candidate_matching=bool(top_candidates),  # <-- Activates Rule 6 only if candidates exist
+    )
+    node, variant, is_new = library.upsert_from_extraction(
+        new_c, extraction, bgr_t1_target, action_context=last_action_ctx
+    )

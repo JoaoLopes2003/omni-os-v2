@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from typing import List, Literal
 from PIL import Image
 
+
 # ==========================================
 # 1. LLM-Specific Schemas (1000-Scale)
 # ==========================================
@@ -13,6 +14,7 @@ class BBox1000(BaseModel):
     xmin: int = Field(description="Left edge (0-1000)")
     ymax: int = Field(description="Bottom edge (0-1000)")
     xmax: int = Field(description="Right edge (0-1000)")
+
 
 class ExtractedContainer(BaseModel):
     id: str = Field(description="Unique snake_case identifier (e.g., 'left_sidebar', 'playback_controls')")
@@ -27,10 +29,12 @@ class ExtractedContainer(BaseModel):
     )
     bbox_1000: BBox1000
 
+
 class LayoutExtraction(BaseModel):
     view_id: str = Field(description="Unique snake_case name for this entire view (e.g., 'spotify_search_results')")
     description: str = Field(description="What is the user looking at globally?")
     containers: List[ExtractedContainer]
+
 
 # ==========================================
 # 2. The Layout Engine
@@ -40,12 +44,18 @@ class LayoutEngine:
         self.client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
         self.model_name = "gemini-3.1-pro-preview"
 
-    def extract_layout(self, image_path: str, process_name: str) -> tuple[dict, dict]:
-        """Analyzes a full-screen image and returns absolute macro-containers."""
-        
-        # Get actual image dimensions to denormalize the 1000-scale coordinates
+    def extract_layout(
+        self,
+        image_path: str,
+        process_name: str,
+        is_masked_update: bool = False,
+    ) -> tuple[dict, dict]:
+        """
+        Analyzes a full-screen image and returns macro-containers.
+        When `is_masked_update=True`, only maps the unmasked regions of the screenshot.
+        """
         with Image.open(image_path) as img:
-            real_width, real_height = img.size
+            real_width, real_height = img.size  # noqa: F841
 
         system_instruction = """You are the Omni-OS Visual Layout Engine. 
 Your task is to analyze an application GUI and segment it into non-overlapping macro-containers.
@@ -73,8 +83,21 @@ Imagine the image is exactly 1000x1000 units.
 - [1000, 1000] is the bottom-right corner.
 Output ymin, xmin, ymax, xmax using this 0-1000 scale."""
 
-        prompt = f"Analyze this screenshot of the process '{process_name}'. Output the structured layout."
-        
+        if is_masked_update:
+            system_instruction += """
+
+7. MASKED INCREMENTAL UPDATE MODE (CRITICAL):
+   Parts of this screenshot are covered by dark semi-transparent rectangles labeled `[KNOWN: <container_id>]`.
+   - DO NOT map or output any container that is covered by a `[KNOWN: ...]` mask. Those regions are already mapped.
+   - ONLY segment the UNMASKED, full-brightness UI region(s) into one or more non-overlapping macro-containers.
+   - Use the borders of adjacent `[KNOWN: ...]` masks and natural UI dividers to anchor the exact 0-1000 boundaries of the newly revealed container(s)."""
+
+        prompt = (
+            f"Analyze the unmasked regions of this screenshot of '{process_name}'. Output only the newly revealed container(s)."
+            if is_masked_update
+            else f"Analyze this screenshot of the process '{process_name}'. Output the structured layout."
+        )
+
         uploaded_file = self.client.files.upload(file=image_path)
 
         try:
@@ -88,9 +111,9 @@ Output ymin, xmin, ymax, xmax using this 0-1000 scale."""
                     response_schema=LayoutExtraction
                 )
             )
-            
+
             raw_data = response.parsed
-            
+
             # Convert 1000-scale to Relative Coordinates (0.0 to 1.0)
             final_containers = []
             for c in raw_data.containers:
@@ -98,7 +121,7 @@ Output ymin, xmin, ymax, xmax using this 0-1000 scale."""
                 rel_y = round(c.bbox_1000.ymin / 1000.0, 4)
                 rel_w = round((c.bbox_1000.xmax - c.bbox_1000.xmin) / 1000.0, 4)
                 rel_h = round((c.bbox_1000.ymax - c.bbox_1000.ymin) / 1000.0, 4)
-                
+
                 final_containers.append({
                     "id": c.id,
                     "description": c.description,
@@ -122,7 +145,7 @@ Output ymin, xmin, ymax, xmax using this 0-1000 scale."""
                 "description": raw_data.description,
                 "containers": final_containers
             }
-            
+
             token_usage = {
                 "input_tokens": response.usage_metadata.prompt_token_count,
                 "output_tokens": response.usage_metadata.candidates_token_count
